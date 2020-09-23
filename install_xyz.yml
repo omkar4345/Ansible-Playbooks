@@ -1,0 +1,20 @@
+---
+- hosts: all 
+  tasks:
+    - name: remove xyz package from the server
+      yum:
+        name: xyz
+        state: removed
+
+    - name: copying xyz rpm file from DCPOPSAUTOVM01 to target machines
+      copy:
+        src: xyz_latest.rpm
+        dest: /tmp/xyz_latest.rpm
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: install xyz_latest package on the servers
+      yum: 
+        name: /tmp/xyz_latest.rpm
+        state: present
