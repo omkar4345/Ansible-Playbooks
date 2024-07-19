@@ -1,12 +1,12 @@
 ---
 - hosts: all 
   tasks:
-    - name: remove xyz package from the server
+    - name: remove htop package on the server
       yum:
-        name: xyz
-        state: removed
+        name: htop
+        state: remove
 
-    - name: copying xyz rpm file from DCPOPSAUTOVM01 to target machines
+    - name: copying xyz rpm file from master server to target machines
       copy:
         src: xyz_latest.rpm
         dest: /tmp/xyz_latest.rpm
