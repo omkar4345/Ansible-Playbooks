@@ -1,0 +1,18 @@
+---
+- hosts: rman
+  tasks:
+    - name: copying Avamar rpm file from DCPOPSAUTOVM01 to target machines
+      copy:
+        src: files/AvamarRMAN-linux-sles11-x86_64-19.4.100-116.rpm
+        dest: /tmp/
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: Upgrade Avamar package on the servers
+      yum: 
+        name: /tmp/AvamarRMAN-linux-sles11-x86_64-19.4.100-116.rpm
+        state: latest
+
+    - name: Start avamar service
+      shell: systemctl restart avagent

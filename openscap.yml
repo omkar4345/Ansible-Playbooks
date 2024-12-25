@@ -1,0 +1,1845 @@
+---
+ - hosts: 10.202.30.201
+   tasks:
+
+    - name: "Read permission of GPG key directory"
+      stat:
+        path: /etc/pki/rpm-gpg/
+      register: gpg_key_directory_permission
+      check_mode: no
+      tags:
+        - ensure_redhat_gpgkey_installed
+        - high
+        - CCE-26957-1
+    # It should fail if it doesn't find any fingerprints in file - maybe file was not parsed well.
+    - name: "Read signatures in GPG key"
+      shell: "gpg --with-fingerprint '/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release' | grep 'Key fingerprint =' | tr -s ' ' | sed 's;.*= ;;g'"
+      changed_when: False
+      register: gpg_fingerprints
+      check_mode: no
+      tags:
+        - ensure_redhat_gpgkey_installed
+        - high
+        - CCE-26957-1
+    - name: "Set Fact: Valid fingerprints"
+      set_fact:
+         gpg_valid_fingerprints: ("567E 347A D004 4ADE 55BA 8A5F 199E 2F91 FD43 1D51" "43A6 E49C 4A38 F4BE 9ABF 2A53 4568 9C88 2FA6 58E0")
+      tags:
+        - ensure_redhat_gpgkey_installed
+        - high
+        - CCE-26957-1
+    - name: "Import RedHat GPG key"
+      rpm_key:
+        state: present
+        key: /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+      when:
+        (gpg_key_directory_permission.stat.mode <= '0755')
+        and (( gpg_fingerprints.stdout_lines | difference(gpg_valid_fingerprints)) | length == 0)
+        and (gpg_fingerprints.stdout_lines | length > 0)
+        and (ansible_distribution == "RedHat")
+      tags:
+        - ensure_redhat_gpgkey_installed
+        - high
+        - CCE-26957-1
+
+    - name: "Check existence of yum on Fedora"
+      stat:
+        path: /etc/yum.conf
+      register: yum_config_file
+      check_mode: no
+      when: ansible_distribution == "Fedora"
+    # Old versions of Fedora use yum
+    - name: "Ensure GPG check is globally activated (yum)"
+      ini_file:
+        dest: "{{item}}"
+        section: main
+        option: gpgcheck
+        value: 1
+        create: False
+      with_items: "/etc/yum.conf"
+      when: ansible_distribution == "RedHat" or yum_config_file.stat.exists
+      tags:
+        - ensure_gpgcheck_globally_activated
+        - high
+        - CCE-26989-4
+    - name: "Ensure GPG check is globally activated (dnf)"
+      ini_file:
+        dest: "{{item}}"
+        section: main
+        option: gpgcheck
+        value: 1
+        create: False
+      with_items: "/etc/dnf/dnf.conf"
+      when: ansible_distribution == "Fedora"
+      tags:
+        - ensure_gpgcheck_globally_activated
+        - high
+        - CCE-26989-4
+
+    - name: "Ensure aide is installed"
+      package:
+        name="{{item}}"
+        state=present
+      with_items:
+        - aide
+      tags:
+        - package_aide_installed
+        - medium
+        - CCE-27096-7
+
+    - name: "Build and Test AIDE Database"
+      shell: /usr/sbin/aide --init
+      tags:
+        - aide_build_database
+        - medium
+        - CCE-27220-3
+    - name: Stage AIDE Database"
+      copy:
+        src: /var/lib/aide/aide.db.new.gz
+        dest: /var/lib/aide/aide.db.gz
+        backup: yes
+      tags:
+        - aide_build_database
+        - medium
+        - CCE-27220-3
+
+    - name: "Read list of files with incorrect permissions"
+      shell: "rpm -Va | grep '^.M' | sed -r 's;^.*\\s+(.+);\\1;g'"
+      register: files_with_incorrect_permissions
+      failed_when: False
+      changed_when: False
+      check_mode: no
+      tags:
+        - rpm_verify_permissions
+        - high
+        - CCE-27209-6
+    - name: "Correct file permissions with RPM"
+      shell: "rpm --setperms $(rpm -qf '{{item}}')"
+      with_items: "{{ files_with_incorrect_permissions.stdout_lines }}"
+      when: files_with_incorrect_permissions.stdout_lines | length > 0
+      tags:
+        - rpm_verify_permissions
+        - high
+        - CCE-27209-6
+
+    - name: "Set fact: Package manager reinstall command (dnf)"
+      set_fact:
+        package_manager_reinstall_cmd: dnf reinstall -y
+      when: ansible_distribution == "Fedora"
+      tags:
+        - rpm_verify_hashes
+        - high
+        - CCE-27157-7
+    - name: "Set fact: Package manager reinstall command (yum)"
+      set_fact:
+        package_manager_reinstall_cmd: yum reinstall -y
+      when: ansible_distribution == "RedHat"
+      tags:
+        - rpm_verify_hashes
+        - high
+        - CCE-27157-7
+    - name: "Read files with incorrect hash"
+      shell: "rpm -Va | grep -E '^..5.* /(bin|sbin|lib|lib64|usr)/' | sed -r 's;^.*\\s+(.+);\\1;g'"
+      register: files_with_incorrect_hash
+      changed_when: False
+      when: package_manager_reinstall_cmd is defined
+      check_mode: no
+      tags:
+        - rpm_verify_hashes
+        - high
+        - CCE-27157-7
+    - name: "Reinstall packages of files with incorrect hash"
+      shell: "{{package_manager_reinstall_cmd}} $(rpm -qf '{{item}}')"
+      with_items: "{{ files_with_incorrect_hash.stdout_lines }}"
+      when: package_manager_reinstall_cmd is defined and (files_with_incorrect_hash.stdout_lines | length > 0)
+      tags:
+        - rpm_verify_hashes
+        - high
+        - CCE-27157-7
+
+    - name: "Ensure dracut-fips is installed"
+      package:
+        name="{{item}}"
+        state=present
+      with_items:
+        - dracut-fips
+      tags:
+        - package_dracut-fips_installed
+        - medium
+        - CCE-80358-5
+
+    - name: "Ensure kernel module 'usb-storage' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - usb-storage
+      tags:
+        - kernel_module_usb-storage_disabled
+        - medium
+        - CCE-27277-3
+
+    - name: "Disable service autofs"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - autofs
+      tags:
+        - service_autofs_disabled
+        - medium
+        - CCE-27498-5
+
+    - name: "Ensure kernel module 'cramfs' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - cramfs
+      tags:
+        - kernel_module_cramfs_disabled
+        - low
+        - CCE-80137-3
+
+    - name: "Ensure kernel module 'freevxfs' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - freevxfs
+      tags:
+        - kernel_module_freevxfs_disabled
+        - low
+        - CCE-80138-1
+
+    - name: "Ensure kernel module 'jffs2' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - jffs2
+      tags:
+        - kernel_module_jffs2_disabled
+        - low
+        - CCE-80139-9
+
+    - name: "Ensure kernel module 'hfs' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - hfs
+      tags:
+        - kernel_module_hfs_disabled
+        - low
+        - CCE-80140-7
+
+    - name: "Ensure kernel module 'hfsplus' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - hfsplus
+      tags:
+        - kernel_module_hfsplus_disabled
+        - low
+        - CCE-80141-5
+
+    - name: "Ensure kernel module 'squashfs' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - squashfs
+      tags:
+        - kernel_module_squashfs_disabled
+        - low
+        - CCE-80142-3
+
+    - name: Ensure sysctl fs.suid_dumpable is set to 0
+      sysctl:
+        name: fs.suid_dumpable
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_fs_suid_dumpable
+        - low
+        - CCE-26900-1
+
+    - name: Ensure sysctl kernel.randomize_va_space is set to 2
+      sysctl:
+        name: kernel.randomize_va_space
+        value: 2
+        state: present
+        reload: yes
+      tags:
+        - sysctl_kernel_randomize_va_space
+        - medium
+        - CCE-27127-0
+
+    - name: Ensure sysctl kernel.dmesg_restrict is set to 1
+      sysctl:
+        name: kernel.dmesg_restrict
+        value: 1
+        state: present
+        reload: yes
+      tags:
+        - sysctl_kernel_dmesg_restrict
+        - low
+        - CCE-27050-4
+
+    - name: "Ensure SELinux Not Disabled in /etc/default/grub"
+      replace:
+        dest: /etc/default/grub
+        regexp: "selinux=0"
+      tags:
+        - enable_selinux_bootloader
+        - medium
+        - CCE-26961-3
+
+    - name: "Ensure SELinux State is Enforcing (persistent)"
+      selinux:
+        state: enforcing
+      tags:
+        - selinux_state
+        - high
+        - CCE-27334-2
+
+    - name: "Configure SELinux Policy"
+      selinux:
+        policy: targeted
+      tags:
+        - selinux_policytype
+        - high
+        - CCE-27279-9
+
+    - name: Set SELinux boolean abrt_anon_write accordingly
+      seboolean:
+        name: abrt_anon_write
+        state: false
+        persistent: yes
+      tags:
+        - sebool_abrt_anon_write
+        - medium
+        - CCE-80419-5
+
+    - name: Set SELinux boolean abrt_handle_event accordingly
+      seboolean:
+        name: abrt_handle_event
+        state: false
+        persistent: yes
+      tags:
+        - sebool_abrt_handle_event
+        - medium
+        - CCE-80420-3
+
+    - name: Set SELinux boolean abrt_upload_watch_anon_write accordingly
+      seboolean:
+        name: abrt_upload_watch_anon_write
+        state: true
+        persistent: yes
+      tags:
+        - sebool_abrt_upload_watch_anon_write
+        - medium
+        - CCE-80421-1
+
+    - name: Set SELinux boolean auditadm_exec_content accordingly
+      seboolean:
+        name: auditadm_exec_content
+        state: true
+        persistent: yes
+      tags:
+        - sebool_auditadm_exec_content
+        - medium
+        - CCE-80424-5
+
+    - name: Set SELinux boolean cron_can_relabel accordingly
+      seboolean:
+        name: cron_can_relabel
+        state: false
+        persistent: yes
+      tags:
+        - sebool_cron_can_relabel
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean cron_system_cronjob_use_shares accordingly
+      seboolean:
+        name: cron_system_cronjob_use_shares
+        state: false
+        persistent: yes
+      tags:
+        - sebool_cron_system_cronjob_use_shares
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean cron_userdomain_transition accordingly
+      seboolean:
+        name: cron_userdomain_transition
+        state: true
+        persistent: yes
+      tags:
+        - sebool_cron_userdomain_transition
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean daemons_dump_core accordingly
+      seboolean:
+        name: daemons_dump_core
+        state: false
+        persistent: yes
+      tags:
+        - sebool_daemons_dump_core
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean daemons_use_tcp_wrapper accordingly
+      seboolean:
+        name: daemons_use_tcp_wrapper
+        state: false
+        persistent: yes
+      tags:
+        - sebool_daemons_use_tcp_wrapper
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean daemons_use_tty accordingly
+      seboolean:
+        name: daemons_use_tty
+        state: false
+        persistent: yes
+      tags:
+        - sebool_daemons_use_tty
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean deny_execmem accordingly
+      seboolean:
+        name: deny_execmem
+        state: false
+        persistent: yes
+      tags:
+        - sebool_deny_execmem
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean deny_ptrace accordingly
+      seboolean:
+        name: deny_ptrace
+        state: false
+        persistent: yes
+      tags:
+        - sebool_deny_ptrace
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean domain_fd_use accordingly
+      seboolean:
+        name: domain_fd_use
+        state: true
+        persistent: yes
+      tags:
+        - sebool_domain_fd_use
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean domain_kernel_load_modules accordingly
+      seboolean:
+        name: domain_kernel_load_modules
+        state: false
+        persistent: yes
+      tags:
+        - sebool_domain_kernel_load_modules
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean fips_mode accordingly
+      seboolean:
+        name: fips_mode
+        state: true
+        persistent: yes
+      tags:
+        - sebool_fips_mode
+        - medium
+        - CCE-80418-7
+
+    - name: Set SELinux boolean gpg_web_anon_write accordingly
+      seboolean:
+        name: gpg_web_anon_write
+        state: false
+        persistent: yes
+      tags:
+        - sebool_gpg_web_anon_write
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean guest_exec_content accordingly
+      seboolean:
+        name: guest_exec_content
+        state: true
+        persistent: yes
+      tags:
+        - sebool_guest_exec_content
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean kerberos_enabled accordingly
+      seboolean:
+        name: kerberos_enabled
+        state: true
+        persistent: yes
+      tags:
+        - sebool_kerberos_enabled
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean logadm_exec_content accordingly
+      seboolean:
+        name: logadm_exec_content
+        state: true
+        persistent: yes
+      tags:
+        - sebool_logadm_exec_content
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean logging_syslogd_can_sendmail accordingly
+      seboolean:
+        name: logging_syslogd_can_sendmail
+        state: false
+        persistent: yes
+      tags:
+        - sebool_logging_syslogd_can_sendmail
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean logging_syslogd_use_tty accordingly
+      seboolean:
+        name: logging_syslogd_use_tty
+        state: true
+        persistent: yes
+      tags:
+        - sebool_logging_syslogd_use_tty
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean login_console_enabled accordingly
+      seboolean:
+        name: login_console_enabled
+        state: true
+        persistent: yes
+      tags:
+        - sebool_login_console_enabled
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean mmap_low_allowed accordingly
+      seboolean:
+        name: mmap_low_allowed
+        state: false
+        persistent: yes
+      tags:
+        - sebool_mmap_low_allowed
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean mock_enable_homedirs accordingly
+      seboolean:
+        name: mock_enable_homedirs
+        state: false
+        persistent: yes
+      tags:
+        - sebool_mock_enable_homedirs
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean mount_anyfile accordingly
+      seboolean:
+        name: mount_anyfile
+        state: true
+        persistent: yes
+      tags:
+        - sebool_mount_anyfile
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean polyinstantiation_enabled accordingly
+      seboolean:
+        name: polyinstantiation_enabled
+        state: false
+        persistent: yes
+      tags:
+        - sebool_polyinstantiation_enabled
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean secadm_exec_content accordingly
+      seboolean:
+        name: secadm_exec_content
+        state: true
+        persistent: yes
+      tags:
+        - sebool_secadm_exec_content
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean secure_mode_insmod accordingly
+      seboolean:
+        name: secure_mode_insmod
+        state: false
+        persistent: yes
+      tags:
+        - sebool_secure_mode_insmod
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean secure_mode accordingly
+      seboolean:
+        name: secure_mode
+        state: false
+        persistent: yes
+      tags:
+        - sebool_secure_mode
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean secure_mode_policyload accordingly
+      seboolean:
+        name: secure_mode_policyload
+        state: false
+        persistent: yes
+      tags:
+        - sebool_secure_mode_policyload
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_direct_dri_enabled accordingly
+      seboolean:
+        name: selinuxuser_direct_dri_enabled
+        state: true
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_direct_dri_enabled
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_execheap accordingly
+      seboolean:
+        name: selinuxuser_execheap
+        state: false
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_execheap
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_execmod accordingly
+      seboolean:
+        name: selinuxuser_execmod
+        state: true
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_execmod
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_execstack accordingly
+      seboolean:
+        name: selinuxuser_execstack
+        state: true
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_execstack
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_mysql_connect_enabled accordingly
+      seboolean:
+        name: selinuxuser_mysql_connect_enabled
+        state: false
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_mysql_connect_enabled
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_ping accordingly
+      seboolean:
+        name: selinuxuser_ping
+        state: true
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_ping
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_postgresql_connect_enabled accordingly
+      seboolean:
+        name: selinuxuser_postgresql_connect_enabled
+        state: false
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_postgresql_connect_enabled
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_rw_noexattrfile accordingly
+      seboolean:
+        name: selinuxuser_rw_noexattrfile
+        state: true
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_rw_noexattrfile
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_share_music accordingly
+      seboolean:
+        name: selinuxuser_share_music
+        state: false
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_share_music
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_tcp_server accordingly
+      seboolean:
+        name: selinuxuser_tcp_server
+        state: false
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_tcp_server
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_udp_server accordingly
+      seboolean:
+        name: selinuxuser_udp_server
+        state: false
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_udp_server
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean selinuxuser_use_ssh_chroot accordingly
+      seboolean:
+        name: selinuxuser_use_ssh_chroot
+        state: false
+        persistent: yes
+      tags:
+        - sebool_selinuxuser_use_ssh_chroot
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean ssh_chroot_rw_homedirs accordingly
+      seboolean:
+        name: ssh_chroot_rw_homedirs
+        state: false
+        persistent: yes
+      tags:
+        - sebool_ssh_chroot_rw_homedirs
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean ssh_keysign accordingly
+      seboolean:
+        name: ssh_keysign
+        state: false
+        persistent: yes
+      tags:
+        - sebool_ssh_keysign
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean ssh_sysadm_login accordingly
+      seboolean:
+        name: ssh_sysadm_login
+        state: false
+        persistent: yes
+      tags:
+        - sebool_ssh_sysadm_login
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean staff_exec_content accordingly
+      seboolean:
+        name: staff_exec_content
+        state: true
+        persistent: yes
+      tags:
+        - sebool_staff_exec_content
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean sysadm_exec_content accordingly
+      seboolean:
+        name: sysadm_exec_content
+        state: true
+        persistent: yes
+      tags:
+        - sebool_sysadm_exec_content
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean unconfined_login accordingly
+      seboolean:
+        name: unconfined_login
+        state: true
+        persistent: yes
+      tags:
+        - sebool_unconfined_login
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean use_ecryptfs_home_dirs accordingly
+      seboolean:
+        name: use_ecryptfs_home_dirs
+        state: false
+        persistent: yes
+      tags:
+        - sebool_use_ecryptfs_home_dirs
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean user_exec_content accordingly
+      seboolean:
+        name: user_exec_content
+        state: true
+        persistent: yes
+      tags:
+        - sebool_user_exec_content
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xdm_bind_vnc_tcp_port accordingly
+      seboolean:
+        name: xdm_bind_vnc_tcp_port
+        state: false
+        persistent: yes
+      tags:
+        - sebool_xdm_bind_vnc_tcp_port
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xdm_exec_bootloader accordingly
+      seboolean:
+        name: xdm_exec_bootloader
+        state: false
+        persistent: yes
+      tags:
+        - sebool_xdm_exec_bootloader
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xdm_sysadm_login accordingly
+      seboolean:
+        name: xdm_sysadm_login
+        state: false
+        persistent: yes
+      tags:
+        - sebool_xdm_sysadm_login
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xdm_write_home accordingly
+      seboolean:
+        name: xdm_write_home
+        state: false
+        persistent: yes
+      tags:
+        - sebool_xdm_write_home
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xguest_connect_network accordingly
+      seboolean:
+        name: xguest_connect_network
+        state: true
+        persistent: yes
+      tags:
+        - sebool_xguest_connect_network
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xguest_exec_content accordingly
+      seboolean:
+        name: xguest_exec_content
+        state: true
+        persistent: yes
+      tags:
+        - sebool_xguest_exec_content
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xguest_mount_media accordingly
+      seboolean:
+        name: xguest_mount_media
+        state: true
+        persistent: yes
+      tags:
+        - sebool_xguest_mount_media
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xguest_use_bluetooth accordingly
+      seboolean:
+        name: xguest_use_bluetooth
+        state: true
+        persistent: yes
+      tags:
+        - sebool_xguest_use_bluetooth
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xserver_clients_write_xshm accordingly
+      seboolean:
+        name: xserver_clients_write_xshm
+        state: false
+        persistent: yes
+      tags:
+        - sebool_xserver_clients_write_xshm
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xserver_execmem accordingly
+      seboolean:
+        name: xserver_execmem
+        state: false
+        persistent: yes
+      tags:
+        - sebool_xserver_execmem
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: Set SELinux boolean xserver_object_manager accordingly
+      seboolean:
+        name: xserver_object_manager
+        state: false
+        persistent: yes
+      tags:
+        - sebool_xserver_object_manager
+        - medium
+        - CCE-RHEL7-CCE-TBD
+
+    - name: "Prevent Log In to Accounts With Empty Password"
+      replace:
+        dest: /etc/pam.d/system-auth
+        regexp: 'nullok\s*'
+        replace: ''
+      tags:
+        - no_empty_passwords
+        - high
+        - CCE-27286-4
+
+    - name: "Disable POST password expiration"
+      lineinfile:
+        create=yes
+        dest="/etc/default/useradd"
+        regexp="^INACTIVE"
+        line="INACTIVE=-1"
+      tags:
+        - account_disable_post_pw_expiration
+        - medium
+        - CCE-27355-7
+
+    - name: "Ensure PAM variable maxrepeat is set to 2"
+      lineinfile:
+        create=yes
+        dest="/etc/security/pwquality.conf"
+        regexp="^maxrepeat"
+        line="maxrepeat = 2"
+      tags:
+        - accounts_password_pam_maxrepeat
+        - medium
+        - CCE-27333-4
+
+    - name: "Ensure PAM variable maxclassrepeat is set to 4"
+      lineinfile:
+        create=yes
+        dest="/etc/security/pwquality.conf"
+        regexp="^maxclassrepeat"
+        line="maxclassrepeat = 4"
+      tags:
+        - accounts_password_pam_maxclassrepeat
+        - medium
+        - CCE-27512-3
+
+    - name: "Ensure PAM variable dcredit is set to -1"
+      lineinfile:
+        create=yes
+        dest="/etc/security/pwquality.conf"
+        regexp="^dcredit"
+        line="dcredit = -1"
+      tags:
+        - accounts_password_pam_dcredit
+        - medium
+        - CCE-27214-6
+
+    - name: "Ensure PAM variable minlen is set to 15"
+      lineinfile:
+        create=yes
+        dest="/etc/security/pwquality.conf"
+        regexp="^minlen"
+        line="minlen = 15"
+      tags:
+        - accounts_password_pam_minlen
+        - medium
+        - CCE-27293-0
+
+    - name: "Ensure PAM variable ucredit is set to -1"
+      lineinfile:
+        create=yes
+        dest="/etc/security/pwquality.conf"
+        regexp="^ucredit"
+        line="ucredit = -1"
+      tags:
+        - accounts_password_pam_ucredit
+        - medium
+        - CCE-27200-5
+
+    - name: "Ensure PAM variable ocredit is set to -1"
+      lineinfile:
+        create=yes
+        dest="/etc/security/pwquality.conf"
+        regexp="^ocredit"
+        line="ocredit = -1"
+      tags:
+        - accounts_password_pam_ocredit
+        - medium
+        - CCE-27360-7
+
+    - name: "Ensure PAM variable lcredit is set to -1"
+      lineinfile:
+        create=yes
+        dest="/etc/security/pwquality.conf"
+        regexp="^lcredit"
+        line="lcredit = -1"
+      tags:
+        - accounts_password_pam_lcredit
+        - medium
+        - CCE-27345-8
+
+    - name: "Ensure PAM variable difok is set to 8"
+      lineinfile:
+        create=yes
+        dest="/etc/security/pwquality.conf"
+        regexp="^difok"
+        line="difok = 8"
+      tags:
+        - accounts_password_pam_difok
+        - medium
+        - CCE-26631-2
+
+    - name: "Ensure PAM variable minclass is set to 4"
+      lineinfile:
+        create=yes
+        dest="/etc/security/pwquality.conf"
+        regexp="^minclass"
+        line="minclass = 4"
+      tags:
+        - accounts_password_pam_minclass
+        - medium
+        - CCE-27115-5
+
+    - name: "Disable service debug-shell"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - debug-shell
+      tags:
+        - service_debug-shell_disabled
+        - medium
+        - CCE-80206-6
+
+    - name: "Ensure screen is installed"
+      package:
+        name="{{item}}"
+        state=present
+      with_items:
+        - screen
+      tags:
+        - package_screen_installed
+        - medium
+        - CCE-27351-6
+
+    - name: Ensure sysctl net.ipv4.conf.default.send_redirects is set to 0
+      sysctl:
+        name: net.ipv4.conf.default.send_redirects
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_default_send_redirects
+        - medium
+        - CCE-80156-3
+
+    - name: Ensure sysctl net.ipv4.conf.all.send_redirects is set to 0
+      sysctl:
+        name: net.ipv4.conf.all.send_redirects
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_all_send_redirects
+        - medium
+        - CCE-80156-3
+
+    - name: Ensure sysctl net.ipv4.ip_forward is set to 0
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_ip_forward
+        - medium
+        - CCE-80157-1
+
+    - name: Ensure sysctl net.ipv4.conf.all.accept_source_route is set
+      sysctl:
+        name: net.ipv4.conf.all.accept_source_route
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_all_accept_source_route
+        - medium
+        - CCE-27434-0
+
+    - name: Ensure sysctl net.ipv4.conf.all.accept_redirects is set
+      sysctl:
+        name: net.ipv4.conf.all.accept_redirects
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_all_accept_redirects
+        - medium
+        - CCE-80158-9
+
+    - name: Ensure sysctl net.ipv4.conf.all.secure_redirects is set
+      sysctl:
+        name: net.ipv4.conf.all.secure_redirects
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_all_secure_redirects
+        - medium
+        - CCE-80159-7
+
+    - name: Ensure sysctl net.ipv4.conf.all.log_martians is set
+      sysctl:
+        name: net.ipv4.conf.all.log_martians
+        value: 1
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_all_log_martians
+        - low
+        - CCE-80160-5
+
+    - name: Ensure sysctl net.ipv4.conf.default.log_martians is set
+      sysctl:
+        name: net.ipv4.conf.default.log_martians
+        value: 1
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_default_log_martians
+        - low
+        - CCE-80161-3
+
+    - name: Ensure sysctl net.ipv4.conf.default.accept_source_route is set
+      sysctl:
+        name: net.ipv4.conf.default.accept_source_route
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_default_accept_source_route
+        - medium
+        - CCE-80162-1
+
+    - name: Ensure sysctl net.ipv4.conf.default.accept_redirects is set
+      sysctl:
+        name: net.ipv4.conf.default.accept_redirects
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_default_accept_redirects
+        - medium
+        - CCE-80163-9
+
+    - name: Ensure sysctl net.ipv4.conf.default.secure_redirects is set
+      sysctl:
+        name: net.ipv4.conf.default.secure_redirects
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_default_secure_redirects
+        - medium
+        - CCE-80164-7
+
+    - name: Ensure sysctl net.ipv4.icmp_echo_ignore_broadcasts is set
+      sysctl:
+        name: net.ipv4.icmp_echo_ignore_broadcasts
+        value: 1
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_icmp_echo_ignore_broadcasts
+        - medium
+        - CCE-80165-4
+
+    - name: Ensure sysctl net.ipv4.icmp_ignore_bogus_error_responses is set
+      sysctl:
+        name: net.ipv4.icmp_ignore_bogus_error_responses
+        value: 1
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_icmp_ignore_bogus_error_responses
+        - low
+        - CCE-80166-2
+
+    - name: Ensure sysctl net.ipv4.tcp_syncookies is set
+      sysctl:
+        name: net.ipv4.tcp_syncookies
+        value: 1
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_tcp_syncookies
+        - medium
+        - CCE-27495-1
+
+    - name: Ensure sysctl net.ipv4.conf.all.rp_filter is set
+      sysctl:
+        name: net.ipv4.conf.all.rp_filter
+        value: 1
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_all_rp_filter
+        - medium
+        - CCE-80167-0
+
+    - name: Ensure sysctl net.ipv4.conf.default.rp_filter is set
+      sysctl:
+        name: net.ipv4.conf.default.rp_filter
+        value: 1
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv4_conf_default_rp_filter
+        - medium
+        - CCE-80168-8
+
+    - name: "Disable service bluetooth"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - bluetooth
+      tags:
+        - service_bluetooth_disabled
+        - medium
+        - CCE-27328-4
+
+    - name: "Ensure kernel module 'bluetooth' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - bluetooth
+      tags:
+        - kernel_module_bluetooth_disabled
+        - medium
+        - CCE-27327-6
+
+    - name: Ensure sysctl net.ipv6.conf.all.accept_source_route is set
+      sysctl:
+        name: net.ipv6.conf.all.accept_source_route
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv6_conf_all_accept_source_route
+        - medium
+        - CCE-80179-5
+
+    - name: Ensure sysctl net.ipv6.conf.all.accept_ra is set
+      sysctl:
+        name: net.ipv6.conf.all.accept_ra
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv6_conf_all_accept_ra
+        - low
+        - CCE-80180-3
+
+    - name: Ensure sysctl net.ipv6.conf.default.accept_ra is set
+      sysctl:
+        name: net.ipv6.conf.default.accept_ra
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv6_conf_default_accept_ra
+        - low
+        - CCE-80181-1
+
+    - name: Ensure sysctl net.ipv6.conf.all.accept_redirects is set
+      sysctl:
+        name: net.ipv6.conf.all.accept_redirects
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv6_conf_all_accept_redirects
+        - medium
+        - CCE-80182-9
+
+    - name: Ensure sysctl net.ipv6.conf.default.accept_redirects is set
+      sysctl:
+        name: net.ipv6.conf.default.accept_redirects
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv6_conf_default_accept_redirects
+        - medium
+        - CCE-80183-7
+
+    - name: Ensure sysctl net.ipv6.conf.default.accept_source_route is set
+      sysctl:
+        name: net.ipv6.conf.default.accept_source_route
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv6_conf_default_accept_source_route
+        - medium
+        - CCE-80335-1
+
+    - name: Ensure sysctl net.ipv6.conf.all.forwarding is set
+      sysctl:
+        name: net.ipv6.conf.all.forwarding
+        value: 0
+        state: present
+        reload: yes
+      tags:
+        - sysctl_net_ipv6_conf_all_forwarding
+        - medium
+        - CCE-80356-9
+
+    - name: "Enable service firewalld"
+      service:
+        name="{{item}}"
+        enabled="yes"
+        state="started"
+      with_items:
+        - firewalld
+      tags:
+        - service_firewalld_enabled
+        - medium
+        - CCE-27361-5
+
+    - name: "Ensure kernel module 'dccp' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - dccp
+      tags:
+        - kernel_module_dccp_disabled
+        - medium
+        - CCE-26828-4
+
+    - name: "Ensure kernel module 'sctp' is disabled"
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - sctp
+      tags:
+        - kernel_module_sctp_disabled
+        - medium
+        - CCE-27106-4
+
+    - name: "Enable service auditd"
+      service:
+        name="{{item}}"
+        enabled="yes"
+        state="started"
+      with_items:
+        - auditd
+      tags:
+        - service_auditd_enabled
+        - high
+        - CCE-27407-6
+
+    - name: "Disable service xinetd"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - xinetd
+      tags:
+        - service_xinetd_disabled
+        - medium
+        - CCE-27443-1
+
+    - name: "Ensure xinetd is removed"
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - xinetd
+      tags:
+        - package_xinetd_removed
+        - low
+        - CCE-27354-0
+
+    - name: "Disable service telnet"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - telnet
+      tags:
+        - service_telnet_disabled
+        - high
+        - CCE-27401-9
+
+    - name: "Ensure telnet-server is removed"
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - telnet-server
+      tags:
+        - package_telnet-server_removed
+        - high
+        - CCE-27165-0
+
+    - name: "Ensure telnet is removed"
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - telnet
+      tags:
+        - package_telnet_removed
+        - low
+        - CCE-27305-2
+
+    - name: "Ensure rsh-server is removed"
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - rsh-server
+      tags:
+        - package_rsh-server_removed
+        - high
+        - CCE-27342-5
+
+    - name: "Disable service rexec"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - rexec
+      tags:
+        - service_rexec_disabled
+        - high
+        - CCE-27408-4
+
+    - name: "Disable service rsh"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - rsh
+      tags:
+        - service_rsh_disabled
+        - high
+        - CCE-27337-5
+
+    - name: "Ensure rsh is removed"
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - rsh
+      tags:
+        - package_rsh_removed
+        - low
+        - CCE-27274-0
+
+    - name: "Disable service rlogin"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - rlogin
+      tags:
+        - service_rlogin_disabled
+        - high
+        - CCE-27336-7
+
+    - name: "Ensure ypserv is removed"
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - ypserv
+      tags:
+        - package_ypserv_removed
+        - high
+        - CCE-27399-5
+
+    - name: "Disable service ypbind"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - ypbind
+      tags:
+        - service_ypbind_disabled
+        - medium
+        - CCE-27385-4
+
+    - name: "Ensure ypbind is removed"
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - ypbind
+      tags:
+        - package_ypbind_removed
+        - low
+        - CCE-27396-1
+
+    - name: "Ensure talk-server is removed"
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - talk-server
+      tags:
+        - package_talk-server_removed
+        - medium
+        - CCE-27210-4
+
+    - name: "Ensure talk is removed"
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - talk
+      tags:
+        - package_talk_removed
+        - low
+        - CCE-27432-4
+
+    - name: "Disable service kdump"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - kdump
+      tags:
+        - service_kdump_disabled
+        - medium
+        - CCE-80258-7
+
+    - name: "Enable service crond"
+      service:
+        name="{{item}}"
+        enabled="yes"
+        state="started"
+      with_items:
+        - crond
+      tags:
+        - service_crond_enabled
+        - medium
+        - CCE-27323-5
+
+    - name: "Enable service sshd"
+      service:
+        name="{{item}}"
+        enabled="yes"
+        state="started"
+      with_items:
+        - sshd
+      tags:
+        - service_sshd_enabled
+        - medium
+        - CCE-80216-5
+
+    - name: Find SSH Keys
+      find:
+        paths: "/etc/ssh/"
+        patterns: "*_key"
+      register: find_ssh
+    - name: Verify Permissions on SSH Server Private *_key Key Files
+      file:
+        dest: "{{ item.path }}"
+        mode: 0600
+      with_items: "{{ find_ssh.files }}"
+      tags:
+        - file_permissions_sshd_private_key
+        - medium
+        - CCE-27485-2
+
+    - name: "Allow Only SSH Protocol 2"
+      lineinfile:
+        dest: /etc/ssh/sshd_config
+        regexp: "^Protocol [0-9]"
+        line: "Protocol 2"
+      notify:
+        - reload ssh
+      tags:
+        - sshd_allow_only_protocol2
+        - high
+        - CCE-27320-1
+
+    - name: "Disable GSSAPI Authentication"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^GSSAPIAuthentication"
+        line="GSSAPIAuthentication no"
+      tags:
+        - sshd_disable_gssapi_auth
+        - medium
+        - CCE-80220-7
+
+    - name: "Disable Kerberos Authentication"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^KerberosAuthentication"
+        line="KerberosAuthentication no"
+      tags:
+        - sshd_disable_kerb_auth
+        - medium
+        - CCE-80221-5
+
+    - name: "Enable Use of Strict Mode Checking"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^StrictModes"
+        line="StrictModes yes"
+      tags:
+        - sshd_enable_strictmodes
+        - medium
+        - CCE-80222-3
+
+    - name: "Enable use of Privilege Separation"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^UsePrivilegeSeparation"
+        line="UsePrivilegeSeparation yes"
+      tags:
+        - sshd_use_priv_separation
+        - medium
+        - CCE-80223-1
+
+    - name: "Disable Compression or Set Compression to delayed"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^Compression"
+        line="Compression delayed"
+      tags:
+        - sshd_disable_compression
+        - medium
+        - CCE-80224-9
+
+    - name: "Set SSH Idle Timeout Interval"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^ClientAliveInterval"
+        line="ClientAliveInterval 600"
+      tags:
+        - sshd_set_idle_timeout
+        - low
+        - CCE-27433-2
+
+    - name: "Set SSH Client Alive Count"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^ClientAliveCountMax"
+        line="ClientAliveCountMax 0"
+      tags:
+        - sshd_set_keepalive
+        - medium
+        - CCE-27082-7
+
+    - name: "Disable SSH Support for .rhosts Files"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^IgnoreRhosts"
+        line="IgnoreRhosts yes"
+      tags:
+        - sshd_disable_rhosts
+        - medium
+        - CCE-27377-1
+
+    - name: "Disable SSH Support for User Known Hosts"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^IgnoreUserKnownHosts"
+        line="IgnoreUserKnownHosts yes"
+      tags:
+        - sshd_disable_user_known_hosts
+        - medium
+        - CCE-80372-6
+
+    - name: "Disable SSH Support for Rhosts RSA Authentication"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^RhostsRSAAuthentication"
+        line="RhostsRSAAuthentication no"
+      tags:
+        - sshd_disable_rhosts_rsa
+        - medium
+        - CCE-80373-4
+
+    - name: "Disable Host-Based Authentication"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^HostbasedAuthentication"
+        line="HostbasedAuthentication no"
+      tags:
+        - disable_host_auth
+        - medium
+        - CCE-27413-4
+
+    - name: "Disable SSH Root Login"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^PermitRootLogin"
+        line="PermitRootLogin no"
+      tags:
+        - sshd_disable_root_login
+        - medium
+        - CCE-27445-6
+
+    - name: "Diable SSH Access via Empty Passwords"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^PermitEmptyPasswords"
+        line="PermitEmptyPasswords no"
+      tags:
+        - sshd_disable_empty_passwords
+        - high
+        - CCE-27471-2
+
+    - name: "Enable SSH Warning Banner"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^Banner"
+        line="Banner /etc/issue"
+      tags:
+        - sshd_enable_warning_banner
+        - medium
+        - CCE-27314-4
+
+    - name: "Do Not Allow SSH Environment Options"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^PermitUserEnvironment"
+        line="PermitUserEnvironment no"
+      tags:
+        - sshd_do_not_permit_user_env
+        - medium
+        - CCE-27363-1
+
+    - name: "Use Only Approved Ciphers"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^Ciphers"
+        line="Ciphers aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,3des-cbc,aes192-cbc,aes256-cbc"
+      tags:
+        - sshd_use_approved_ciphers
+        - medium
+        - CCE-27295-5
+
+    - name: "Use Only Approved MACs"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^MACs"
+        line="MACs hmac-sha2-512,hmac-sha2-256,hmac-sha1"
+      tags:
+        - sshd_use_approved_macs
+        - medium
+        - CCE-27455-5
+
+    - name: "Disable service zebra"
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      with_items:
+        - zebra
+      tags:
+        - service_zebra_disabled
+        - medium
+        - CCE-27191-6
+

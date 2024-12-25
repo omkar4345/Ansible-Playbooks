@@ -1,0 +1,45 @@
+---
+- hosts: DCPOPSLINMRTG01
+  tasks:
+    - name: copying secunia rpm file from DCPOPSAUTOVM01 to target machines
+      copy:
+        src: files/csia_linux-7.6.1.13-1.el7.noarch.rpm
+        dest: /tmp/
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: install secunia package on the servers
+      yum: 
+        name: /tmp/csia_linux-7.6.1.13-1.el7.noarch.rpm
+        state: present
+
+    - name: Start secunia service
+      shell: systemctl restart com.secunia.csia.service
+
+    - name: copying secunia file from DCPOPSAUTOVM01 to target machines
+      copy:
+        src: files/edu_intermediate.cer
+        dest: /etc/pki/ca-trust/source/anchors/
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: copying secunia file from DCPOPSAUTOVM01 to target machines
+      copy:
+        src: files/edu_root.cer
+        dest: /etc/pki/ca-trust/source/anchors/
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: copying secunia cert file from DCPOPSAUTOVM01 to target machines
+      copy:
+        src: files/csi.crt
+        dest: /etc/pki/ca-trust/source/anchors/
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: Start secunia service
+      shell: systemctl restart com.secunia.csia.service

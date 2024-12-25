@@ -1,0 +1,18 @@
+---
+- hosts: SPLUNK-TEST-ENV
+  tasks:
+#    - name: copying MOEHE satellite rpm file from DCPOPSAUTOVM01 to target machines
+#      copy:
+#        src: files/katello-ca-consumer-dcprhlsat01.secedu.qa-1.0-1.noarch.rpm
+#        dest: /tmp/
+#        owner: root
+#        group: root
+#        mode: 0644
+
+#    - name: install MOEHE satellite rpm package on the servers
+#      yum: 
+#        name: /tmp/katello-ca-consumer-dcprhlsat01.secedu.qa-1.0-1.noarch.rpm
+#        state: present
+
+    - name: Register MOEHE satellite client to MOEHE satellite server
+      shell: "curl -sS --insecure 'https://dcprhelsat01.secedu.qa:9090/register?hostgroup_id=1&location_id=2&operatingsystem_id=1&organization_id=1&update_packages=false' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjo0LCJpYXQiOjE2NTY5NDg0NDcsImp0aSI6IjQ5ZTk1MTM0MTFiY2Y0NGZmZjE1OWRmOGRlYzA3YjBlMGM0Y2Q3NDIyMTk3NGNkZTAwY2MzYTYxYzRmZTU3OWIiLCJleHAiOjE2NTY5NjI4NDcsInNjb3BlIjoicmVnaXN0cmF0aW9uI2dsb2JhbCByZWdpc3RyYXRpb24jaG9zdCJ9.QmArKqxYj5t2EWA9VjYTl6b6NSiM0K_Z9N0vj64dxZY' | bash"

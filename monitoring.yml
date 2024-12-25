@@ -1,0 +1,13 @@
+---
+- hosts: EBIZ_PROD
+
+  tasks:
+
+    - name: copy monitoring script
+      copy:
+        src: files/monitoring_script.sh
+        dest: /tmp/
+        mode: 0755
+
+    - name: techmint script installation task
+      command: sh /tmp/monitoring_script.sh > /tmp/server_status_16jun22.log

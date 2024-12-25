@@ -1,0 +1,24 @@
+---
+- hosts: splk-index01
+  tasks:
+    - name: copying nessus rpm file from DCPOPSAUTOVM01 to target machines
+      copy:
+        src: files/NessusAgent-10.1.3-es7.x86_64.rpm
+        dest: /tmp/
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: install nessus package on the servers
+      yum: 
+        name: /tmp/NessusAgent-10.1.3-es7.x86_64.rpm
+        state: present
+
+    - name: Start nessus service
+      shell: systemctl start nessusagent.service
+
+    - name: Link Agent to Nessus Manager
+      shell: /opt/nessus_agent/sbin/nessuscli agent link --key=67c10be8fae79dfa0390c6f8b5a470b0cb524baa12937f43132346ee979cc996 --groups="MOE-Linux-Servers" --host=nessusmanager.secedu.qa --port=8834
+
+    - name: Restart nessus service
+      shell: systemctl restart nessusagent.service

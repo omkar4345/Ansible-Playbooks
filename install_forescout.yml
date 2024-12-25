@@ -1,0 +1,14 @@
+---
+- hosts: <put names as per ansible hosts file>
+  tasks:
+    - name: copying forescout installer files from DCPOPSAUTOVM01 to target machines
+      copy:
+        src: /etc/ansible/task-list/files/secure_connector 
+        dest: /tmp/
+        directory_mode: yes
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: install forescouts on the servers
+      shell: sh /tmp/secure_connector/install.sh -i

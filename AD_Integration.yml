@@ -1,0 +1,27 @@
+---
+- hosts: <hostname/IP>
+
+  tasks:
+    - name: AD integration
+      shell: yum install -y sssd realmd oddjob oddjob-mkhomedir adcli samba-common samba-common-tools krb5-workstation openldap-clients policycoreutils-python-utils.noarch
+
+    - name: copy ADservers details in target servers
+      copy:
+        src: files/adserver.txt
+        dest: /tmp
+        mode: 0755
+
+#    - name: Add AD servers names in /etc/hosts files
+#      shell: cat /tmp/adserver.txt >> /etc/hosts
+# 
+    - name: Linux server joining to AD
+      shell: echo "xlhi-(?Rq9wH" | realm join --user=svc_linux_dj@example.qa example.qa
+
+    - name: copy sssd.conf file on targetted servers
+      copy:
+        src: files/sssd.conf_4all_user
+        dest: /etc/sssd/sssd.conf
+        mode: 0600
+
+    - name: restart sssd service
+      shell: systemctl restart sssd

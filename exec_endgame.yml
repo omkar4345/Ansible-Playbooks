@@ -1,0 +1,21 @@
+---
+ - hosts: templates
+
+   tasks:
+   - name: copy file from local host to remote host (absolute path) files/SensorLinuxInstaller-MHE
+     copy:
+       src: files/SensorLinuxInstaller-MHE
+       dest: /tmp/
+       mode: 0755
+
+   - name: copy file from local host to remote host (absolute path) files/SensorLinuxInstaller-MHE.cfg
+     copy:
+       src: files/SensorLinuxInstaller-MHE.cfg
+       dest: /tmp/
+       mode: 0755
+
+   - name: execute command for ENDGAME
+     shell:
+       chdir: /tmp/
+       cmd: ./SensorLinuxInstaller-MHE -c SensorLinuxInstaller-MHE.cfg -k 6B3F1EF0C0BB0F8F8FDB -d false
+

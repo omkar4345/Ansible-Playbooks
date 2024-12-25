@@ -1,0 +1,14 @@
+---
+- hosts: templates
+  tasks:
+    - name: copying Symantec installer file from DCPOPSAUTOVM01 to target machines
+      copy:
+        src: /etc/ansible/task-list/files/SymantecEndpointProtection 
+        dest: /tmp/
+        directory_mode: yes
+        owner: root
+        group: root
+        mode: 0755
+
+    - name: install Symantec on the servers
+      shell: sh /tmp/SymantecEndpointProtection/install.sh -i

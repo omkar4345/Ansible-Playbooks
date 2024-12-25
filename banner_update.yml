@@ -1,0 +1,13 @@
+---
+ - hosts: all
+
+   tasks:
+   - name: copy file from local host to remote host (absolute path) files/motd
+     copy:
+       src: files/motd
+       dest: /etc/
+       mode: 0644
+   - name: restart sshd service
+     service:
+       name: sshd
+       state: restarted

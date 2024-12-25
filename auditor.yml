@@ -1,0 +1,26 @@
+---
+- hosts: SPLUNK_SERVERS
+
+  tasks:
+
+    - name: copy Auditing conf details in target servers
+      copy:
+        src: files/audit.txt
+        dest: /tmp
+        mode: 0755
+
+    - name: update ulimits in /etc/security/limits.conf files
+      shell: cat /tmp/audit.txt >> /etc/profile
+
+
+    - name: copy Auditing conf details in target servers
+      copy:
+        src: files/audit2.txt
+        dest: /tmp
+        mode: 0755
+
+    - name: update ulimits in /etc/security/limits.conf files
+      shell: cat /tmp/audit2.txt >> /etc/rsyslog.conf
+
+    - name: restart rsyslogd service
+      shell: systemctl restart rsyslog

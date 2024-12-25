@@ -1,0 +1,14 @@
+---
+- hosts: SPLK_INDEXes
+
+  tasks:
+
+    - name: copy ADservers details in target servers
+      copy:
+        src: files/inputs_update.txt
+        dest: /tmp
+        mode: 0755
+
+    - name: update ulimits in /etc/security/limits.conf files
+      shell: cat /tmp/inputs_update.txt >> /opt/splunk/etc/system/local/inputs.conf
+

@@ -1,0 +1,26 @@
+---
+- hosts: dcpresireceiver
+  tasks:
+
+  - name: install Chrony package on the servers
+    yum:
+      name: chrony*
+      state: present
+
+  - name: copy NTP server details in target server's ntp config file
+    copy:
+      src: files/ntp-server-entry.txt
+      dest: /tmp
+      mode: 0755
+
+  - name: Add NTP servers info in /etc/chrony.conf files
+    shell: cat /tmp/ntp-server-entry.txt >> /etc/chrony.conf
+
+  - name: Start NTP service
+    shell: systemctl restart chronyd
+
+  - name: Enable NTP service
+    shell: systemctl enable chronyd
+
+  - name: set timezone
+    shell: timedatectl set-timezone Asia/Qatar
